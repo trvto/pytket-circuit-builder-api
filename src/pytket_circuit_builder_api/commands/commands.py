@@ -1,13 +1,13 @@
 import functools
 import inspect
-from collections.abc import Sequence
+from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass, field
-from typing import Any, Self, TypeVar, Callable, Union, Iterable, Optional
+from typing import Any, Self, TypeVar
 
 from pytket import Bit, Circuit, OpType, Qubit
 from pytket._tket.circuit import CircBox as TketCircBox
 from pytket._tket.circuit import Op, QControlBox
-from pytket._tket.unit_id import QubitRegister, BitRegister
+from pytket._tket.unit_id import BitRegister, QubitRegister
 
 from pytket_circuit_builder_api.angle import Angle
 from pytket_circuit_builder_api.commands.command_interface import (
@@ -272,6 +272,8 @@ class CommandTemplate:
                 "Templated qubits and bits must match signature of provided command exactly",
             )
         if set(template_command.bits()) != set(template_bits):
+            print(template_command.bits())
+            print(template_bits)
             raise Exception(
                 "Templated qubits and bits must match signature of provided command exactly",
             )
@@ -295,8 +297,7 @@ class CommandTemplate:
         return self.template_command.sub(qubit_sub_map, bit_sub_map)
 
 
-
-def split_qubits_bits(mylist: Sequence[Union[Qubit, Bit]]) -> tuple[list[Qubit], list[Bit]]:
+def split_qubits_bits(mylist: Sequence[Qubit | Bit]) -> tuple[list[Qubit], list[Bit]]:
     qubits = []
     bits = []
     for item in mylist:
@@ -307,11 +308,16 @@ def split_qubits_bits(mylist: Sequence[Union[Qubit, Bit]]) -> tuple[list[Qubit],
     return qubits, bits
 
 
-def pytket_operator(func: Callable[[Union[QubitRegister, BitRegister, Qubit, Bit], ...], TketCompatibleCommand]):
+def pytket_operator(
+    func: Callable[
+        [QubitRegister | BitRegister | Qubit | Bit, ...],
+        TketCompatibleCommand,
+    ],
+):
     n_qubits = 0
     n_bits = 0
     func_signature = inspect.signature(func)
-    initial_args: list[Union[Qubit, Bit]] = []
+    initial_args: list[Qubit | Bit] = []
     for param in func_signature.parameters.values():
         if param.annotation == Qubit:
             qb = Qubit("qX", n_qubits)
@@ -328,7 +334,7 @@ def pytket_operator(func: Callable[[Union[QubitRegister, BitRegister, Qubit, Bit
     command_template = CommandTemplate(
         template_qubits=initial_qubits,
         template_bits=initial_bits,
-        template_command=func(*initial_args)
+        template_command=func(*initial_args),
     )
 
     @functools.wraps(func)
@@ -338,16 +344,17 @@ def pytket_operator(func: Callable[[Union[QubitRegister, BitRegister, Qubit, Bit
         bound_args = func_signature.bind(*args, **kwargs)
         qubits, bits = split_qubits_bits(bound_args.args)
         return command_template.apply_to(qubits, bits)
+
     return wrapper
 
 
 def pytket_circbox(func: Callable[..., Iterable[TketCompatibleCommand]]):
-    """Define a pytket CircBox object"""
+    """Define a pytket CircBox object."""
     circuit = Circuit()
     n_qubits = 0
     n_bits = 0
     func_signature = inspect.signature(func)
-    initial_args: list[Union[Qubit, Bit]] = []
+    initial_args: list[Qubit | Bit] = []
     for param in func_signature.parameters.values():
         if param.annotation == Qubit:
             qb = Qubit("qX", n_qubits)
@@ -360,7 +367,9 @@ def pytket_circbox(func: Callable[..., Iterable[TketCompatibleCommand]]):
             initial_args.append(b)
             circuit.add_bit(b)
         else:
-            raise Exception("Function parameters must be annotated with the types Qubit or Bit")
+            raise Exception(
+                "Function parameters must be annotated with the types Qubit or Bit",
+            )
 
     for command in func(*initial_args):
         circuit.add_command(command)
@@ -370,7 +379,7 @@ def pytket_circbox(func: Callable[..., Iterable[TketCompatibleCommand]]):
     command_template = CommandTemplate(
         template_qubits=qubits,
         template_bits=bits,
-        template_command=CircBox(circuit)
+        template_command=CircBox(circuit),
     )
 
     @functools.wraps(func)
@@ -380,4 +389,5 @@ def pytket_circbox(func: Callable[..., Iterable[TketCompatibleCommand]]):
         bound_args = func_signature.bind(*args, **kwargs)
         qubits_called, bits_called = split_qubits_bits(bound_args.args)
         return command_template.apply_to(qubits_called, bits_called)
+
     return wrapper
