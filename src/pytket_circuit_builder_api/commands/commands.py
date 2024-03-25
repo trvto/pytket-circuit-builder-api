@@ -1,10 +1,13 @@
+import functools
+import inspect
 from collections.abc import Sequence
 from dataclasses import dataclass, field
-from typing import Any, Self, TypeVar
+from typing import Any, Self, TypeVar, Callable, Union, Iterable, Optional
 
 from pytket import Bit, Circuit, OpType, Qubit
 from pytket._tket.circuit import CircBox as TketCircBox
 from pytket._tket.circuit import Op, QControlBox
+from pytket._tket.unit_id import QubitRegister, BitRegister
 
 from pytket_circuit_builder_api.angle import Angle
 from pytket_circuit_builder_api.commands.command_interface import (
@@ -157,7 +160,7 @@ class QControlled(TketCompatibleCommand):
                     "Control state length must match number of  control qubits",
                 )
         else:
-            self._control_state = [True for _ in self.control_qubits]
+            self.control_state = [True for _ in self.control_qubits]
 
     def append_to_tket_circuit(self, circuit: Circuit) -> None:
         _raise_if_operands_missing_from_circuit(circuit, self.qubits())
@@ -165,7 +168,7 @@ class QControlled(TketCompatibleCommand):
         if not self._box:
             self._box = QControlBox(
                 self.command.to_tket_op(),
-                n=len(self.control_qubits),
+                n_controls=len(self.control_qubits),
                 control_state=self.control_state,
             )
         assert self._box is not None
@@ -290,3 +293,91 @@ class CommandTemplate:
         qubit_sub_map = {self.template_qubits[i]: qubits[i] for i in range(len(qubits))}
         bit_sub_map = {self.template_bits[i]: bits[i] for i in range(len(bits))}
         return self.template_command.sub(qubit_sub_map, bit_sub_map)
+
+
+
+def split_qubits_bits(mylist: Sequence[Union[Qubit, Bit]]) -> tuple[list[Qubit], list[Bit]]:
+    qubits = []
+    bits = []
+    for item in mylist:
+        if isinstance(item, Qubit):
+            qubits.append(item)
+        if isinstance(item, Bit):
+            bits.append(item)
+    return qubits, bits
+
+
+def pytket_operator(func: Callable[[Union[QubitRegister, BitRegister, Qubit, Bit], ...], TketCompatibleCommand]):
+    n_qubits = 0
+    n_bits = 0
+    func_signature = inspect.signature(func)
+    initial_args: list[Union[Qubit, Bit]] = []
+    for param in func_signature.parameters.values():
+        if param.annotation == Qubit:
+            qb = Qubit("qX", n_qubits)
+            n_qubits += 1
+            initial_args.append(qb)
+        elif param.annotation == Bit:
+            b = Bit("cX", n_bits)
+            n_bits += 1
+            initial_args.append(b)
+        else:
+            raise Exception("Function parameters must be annotated with Qubit or Bit")
+
+    initial_qubits, initial_bits = split_qubits_bits(initial_args)
+    command_template = CommandTemplate(
+        template_qubits=initial_qubits,
+        template_bits=initial_bits,
+        template_command=func(*initial_args)
+    )
+
+    @functools.wraps(func)
+    def wrapper(*args, **kwargs):
+        nonlocal func_signature
+        nonlocal command_template
+        bound_args = func_signature.bind(*args, **kwargs)
+        qubits, bits = split_qubits_bits(bound_args.args)
+        return command_template.apply_to(qubits, bits)
+    return wrapper
+
+
+def pytket_circbox(func: Callable[..., Iterable[TketCompatibleCommand]]):
+    """Define a pytket CircBox object"""
+    circuit = Circuit()
+    n_qubits = 0
+    n_bits = 0
+    func_signature = inspect.signature(func)
+    initial_args: list[Union[Qubit, Bit]] = []
+    for param in func_signature.parameters.values():
+        if param.annotation == Qubit:
+            qb = Qubit("qX", n_qubits)
+            n_qubits += 1
+            initial_args.append(qb)
+            circuit.add_qubit(qb)
+        elif param.annotation == Bit:
+            b = Bit("cX", n_bits)
+            n_bits += 1
+            initial_args.append(b)
+            circuit.add_bit(b)
+        else:
+            raise Exception("Function parameters must be annotated with the types Qubit or Bit")
+
+    for command in func(*initial_args):
+        circuit.add_command(command)
+
+    qubits, bits = split_qubits_bits(initial_args)
+
+    command_template = CommandTemplate(
+        template_qubits=qubits,
+        template_bits=bits,
+        template_command=CircBox(circuit)
+    )
+
+    @functools.wraps(func)
+    def wrapper(*args, **kwargs):
+        nonlocal command_template
+        nonlocal func_signature
+        bound_args = func_signature.bind(*args, **kwargs)
+        qubits_called, bits_called = split_qubits_bits(bound_args.args)
+        return command_template.apply_to(qubits_called, bits_called)
+    return wrapper

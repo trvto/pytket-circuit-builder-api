@@ -67,6 +67,6 @@ def from_operation_list_func(commands: Iterable[TketCompatibleCommand]) -> Circu
     return circuit
 
 
-Circuit.addd = append_func
+Circuit.add_command = append_func
 Circuit.extend = extend_func
 Circuit.from_operation_list = from_operation_list_func
