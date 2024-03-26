@@ -95,7 +95,7 @@ def test_parametrized_command() -> None:
         print(command)
 
 
-def test_paramtrized_circbox() -> None:
+def test_parametrized_circbox() -> None:
     @pytket_operator
     def circ_op(t: Qubit, c1: Qubit, c2: Qubit) -> CircBox:
         circ = Circuit()
